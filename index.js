@@ -9,6 +9,8 @@ import pino from 'pino';
 
 const {
   ANTHROPIC_API_KEY,
+  GEMINI_API_KEY,
+  GEMINI_MODEL = 'gemini-2.5-flash',
   WA_PHONE,
   MODEL = 'claude-sonnet-5-5',
   TRIGGER = '!ai',
@@ -16,12 +18,37 @@ const {
   SYSTEM_PROMPT = 'Kamu asisten AI di grup WhatsApp. Jawab singkat dan ramah.',
 } = process.env;
 
-if (!ANTHROPIC_API_KEY || !WA_PHONE) {
-  console.error('Isi ANTHROPIC_API_KEY dan WA_PHONE di file .env');
+if ((!ANTHROPIC_API_KEY && !GEMINI_API_KEY) || !WA_PHONE) {
+  console.error('Isi GEMINI_API_KEY (atau ANTHROPIC_API_KEY) dan WA_PHONE');
   process.exit(1);
 }
 
-const claude = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+const useGemini = Boolean(GEMINI_API_KEY);
+const claude = useGemini ? null : new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+console.log('Provider AI:', useGemini ? `Gemini (${GEMINI_MODEL})` : `Claude (${MODEL})`);
+
+async function callGemini(turns) {
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+        contents: turns.map((t) => ({
+          role: t.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: t.content }],
+        })),
+        tools: [{ google_search: {} }],
+        generationConfig: { maxOutputTokens: 2000 },
+      }),
+    }
+  );
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.error?.message || `Gemini error ${res.status}`);
+  const parts = data.candidates?.[0]?.content?.parts || [];
+  return parts.map((x) => x.text || '').join('').trim();
+}
 const allowed = ALLOWED_GROUPS.split(',').map((s) => s.trim()).filter(Boolean);
 const trigger = TRIGGER.toLowerCase();
 
@@ -55,14 +82,19 @@ async function askClaude(groupJid, senderName, text) {
   // pesan pertama harus dari user
   while (turns.length && turns[0].role !== 'user') turns.shift();
 
-  const res = await claude.messages.create({
-    model: MODEL,
-    max_tokens: 2000,
-    system: SYSTEM_PROMPT,
-    messages: turns,
-    tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }],
-  });
-  const reply = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
+  let reply;
+  if (useGemini) {
+    reply = await callGemini(turns);
+  } else {
+    const res = await claude.messages.create({
+      model: MODEL,
+      max_tokens: 2000,
+      system: SYSTEM_PROMPT,
+      messages: turns,
+      tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }],
+    });
+    reply = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
+  }
 
   turns.push({ role: 'assistant', content: reply });
   history.set(groupJid, turns);
