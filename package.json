@@ -1,0 +1,12 @@
+{
+  "name": "wa-ai-grup",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": { "start": "node index.js" },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.52.0",
+    "@whiskeysockets/baileys": "^6.7.0",
+    "dotenv": "^16.4.5",
+    "pino": "^9.0.0"
+  }
+}
